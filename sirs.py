@@ -15,6 +15,7 @@
 # of graph-tool.
 
 import numpy as np
+import copy as cp
 import matplotlib
 matplotlib.use('gtk3agg')
 import matplotlib.pyplot as plt
@@ -47,10 +48,12 @@ removed = g.new_vertex_property("bool")
 
 # SIRS dynamics parameters:
 
-x = 0.0001    # spontaneous outbreak probability
+x = 0.001    # spontaneous outbreak probability
 r = 0.01      # I->R probability
 s = 0.009     # R->S probability
-p = 0.1
+recovery_rate = 0.01
+has_infection = 0
+
 
 # (Note that the S->I transition happens simultaneously for every vertex with a
 #  probability equal to the fraction of non-recovered neighbours which are
@@ -69,12 +72,16 @@ plot_values["I"] = list()
 plot_values["R"] = list()
 
 # Initialize all vertices to the S state
+# and probability of infection
 state = g.new_vertex_property("vector<double>")
+p = g.new_vertex_property("double")
 for v in g.vertices():
     state[v] = S
-
+    p[v] = 1.0
 # Newly infected nodes will be highlighted in red
 newly_infected = g.new_vertex_property("bool")
+has_infection = g.new_vertex_property("bool")
+has_infection.a = False
 
 # If True, the frames will be dumped to disk as images.
 offscreen = sys.argv[1] == "offscreen" if len(sys.argv) > 1 else False
@@ -92,8 +99,8 @@ if not offscreen:
 
 
     #MATPLOTLIB ANIMATION
-    plotwindow = Gtk.Window()
-    plotwindow.set_default_size(400, 400)
+    #plotwindow = Gtk.Window()
+    #plotwindow.set_default_size(400, 400)
     fig1 = Figure(figsize=(5,5), dpi=100)
     ax1 = fig1.add_subplot(111)
     
@@ -102,12 +109,12 @@ if not offscreen:
     ax1.set_xlabel('time')
     ax1.set_title('SIR Time Plot')
 
-    sw = Gtk.ScrolledWindow()
-    plotwindow.add(sw)
+    #sw = Gtk.ScrolledWindow()
+    #plotwindow.add(sw)
 
     canvas = FigureCanvas(fig1)
     canvas.set_size_request(400,400)
-    sw.add_with_viewport(canvas)
+    #sw.add_with_viewport(canvas)
 
 
 else:
@@ -124,74 +131,66 @@ else:
 # This function will be called repeatedly by the GTK+ main loop, and we use it
 # to update the state according to the SIRS dynamics.
 def update_state():
-    newly_infected.a = False
-    removed.a = False
+	newly_infected.a = False
+	global has_infection
 
-    # visit the nodes in random order
-    vs = list(g.vertices())
-    shuffle(vs) 
-    counter = dict()
-    counter["R"] = 0
-    counter["S"] = 0
-    counter["I"] = 0
-    for v in vs:
-        if state[v] == I:
-            counter["I"] += 1
-            if random() < r:
-                state[v] = R
-        elif state[v] == S:
-            counter["S"] += 1
-            if random() < x:
-                state[v] = I
-            else:
-                ns = list(v.out_neighbours())
-                if len(ns) > 0:
-                    if random() < p: # here we go, mofo
-                        w = ns[randint(0, len(ns))]  # choose a random neighbour
-                        if state[w] == I:
-                            state[v] = I
-                            newly_infected[v] = True
-        elif random() < s:
-            state[v] = S
-        if state[v] == R:
-            counter["R"] += 1
-            removed[v] = True
+	# visit the nodes in random order
+	vs = list(g.vertices())
+	shuffle(vs)
 
-    with open("plot.txt", "a") as myfile:
-    	myfile.write(str(counter["S"])+","+str(counter["I"])+","+str(counter["R"])+"\n")
-    plot_values["S"].append(counter["S"])
-    plot_values["I"].append(counter["I"])
-    plot_values["R"].append(counter["R"])
+	for v in vs:
+		if random() < x:
+			p[v] = 0.0
+			newly_infected[v] = True
+		elif has_infection[v] == True:
+			ns = list(v.out_neighbours())
+			if len(ns) > 0:
+				for w in ns:
+					if random() < p[w]: # chance de ser infectado				
+						newly_infected[w] = True
+						p[w] = 0.0
+		if (p[v] < 1.0):
+			p[v] += recovery_rate
+		state[v] = [p[v], p[v], p[v], 1.0]
+
+	has_infection = cp.deepcopy(newly_infected)	
+
+    #with open("plot.txt", "a") as myfile:
+    #	myfile.write(str(counter["S"])+","+str(counter["I"])+","+str(counter["R"])+"\n")
+    #plot_values["S"].append(counter["S"])
+    #plot_values["I"].append(counter["I"])
+    #plot_values["R"].append(counter["R"])
 
     # Filter out the recovered vertices
     #g.set_vertex_filter(removed, inverted=True)
 
     # The following will force the re-drawing of the graph, and issue a
     # re-drawing of the GTK window.
-    win.graph.regenerate_surface()
-    win.graph.queue_draw()
+	win.graph.regenerate_surface()
+	win.graph.queue_draw()
 
 
-    ax1.plot(range(len(plot_values["S"])), plot_values["S"],color='b')
-    ax1.plot(range(len(plot_values["I"])), plot_values["I"],color='r')
-    ax1.plot(range(len(plot_values["R"])), plot_values["R"],color='y')
-    fig1.canvas.draw()
+    #ax1.plot(range(len(plot_values["S"])), plot_values["S"],color='b')
+    #ax1.plot(range(len(plot_values["I"])), plot_values["I"],color='r')
+    #ax1.plot(range(len(plot_values["R"])), plot_values["R"],color='y')
+    #fig1.canvas.draw()
 
     # if doing an offscreen animation, dump frame to disk
-    if offscreen:
-        global count
-        pixbuf = win.get_pixbuf()
-        pixbuf.savev(r'./frames/sirs%06d.png' % count, 'png', [], [])
-        if count > max_count:
-            sys.exit(0)
-        count += 1
+	if offscreen:
+		global count
+		pixbuf = win.get_pixbuf()
+		pixbuf.savev(r'./frames/sirs%06d.png' % count, 'png', [], [])
+		if count > max_count:
+			sys.exit(0)
+		count += 1
 
     # We need to return True so that the main loop will call this function more
     # than once.
-    return True
+	return True
 
 
 # Bind the function above as an 'idle' callback.
+has_infection.a = False
 cid = GObject.idle_add(update_state)
 
 # We will give the user the ability to stop the program by closing the window.
@@ -199,5 +198,5 @@ win.connect("delete_event", Gtk.main_quit)
 
 # Actually show the window, and start the main loop.
 win.show_all()
-plotwindow.show_all()
+#plotwindow.show_all()
 Gtk.main()
